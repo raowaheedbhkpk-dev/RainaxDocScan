@@ -1,0 +1,42 @@
+name: Build APK and Release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: ver
+        run: echo "v=$(cat VERSION | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+
+      - name: Build debug APK
+        run: gradle assembleDebug --stacktrace -Pvname=${{ steps.ver.outputs.v }} -Pvcode=${{ github.run_number }}
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk RainaxDocScan-v${{ steps.ver.outputs.v }}.apk
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.v }}
+          name: Rainax DocScan v${{ steps.ver.outputs.v }}
+          body_path: CHANGELOG.md
+          files: RainaxDocScan-v${{ steps.ver.outputs.v }}.apk

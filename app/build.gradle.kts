@@ -12,8 +12,8 @@ android {
         applicationId = "com.rainax.docscan" // your unique Play Store id
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = (project.findProperty("vcode") as String?)?.toInt() ?: 1
+        versionName = (project.findProperty("vname") as String?) ?: "1.0.0"
         // Google's TEST AdMob app id. Replace with your real one before release.
         manifestPlaceholders["admobAppId"] = "ca-app-pub-3940256099942544~3347511713"
     }
