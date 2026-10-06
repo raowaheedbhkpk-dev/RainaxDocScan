@@ -1,14 +1,23 @@
 package com.rainax.docscan
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Matrix
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
+import android.graphics.pdf.PdfRenderer
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import androidx.exifinterface.media.ExifInterface
+import kotlin.math.max
 import androidx.core.content.FileProvider
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
@@ -176,6 +185,89 @@ object Repo {
         buildPdf(doc.dir)
     }
 
+    /** Photos picked from the gallery/files -> one new document. */
+    fun fromImages(c: Context, uris: List<Uri>): ScanDoc? {
+        val dir = newDir(c, defaultName())
+        var n = 0
+        uris.forEach { u ->
+            val bmp = decodeScaled(c, u, 2200) ?: return@forEach
+            File(dir, "p%03d.jpg".format(n++)).outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+            bmp.recycle()
+        }
+        if (n == 0) { dir.deleteRecursively(); return null }
+        buildPdf(dir)
+        return load(dir)
+    }
+
+    /** Imports an existing PDF: keeps the original file and renders page images for viewing / OCR. */
+    fun importPdf(c: Context, uri: Uri, name: String): ScanDoc? {
+        val dir = newDir(c, name.ifBlank { defaultName() })
+        c.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+            val renderer = PdfRenderer(pfd)
+            try {
+                for (i in 0 until renderer.pageCount) {
+                    val page = renderer.openPage(i)
+                    try {
+                        val bmp = Bitmap.createBitmap(page.width * 2, page.height * 2, Bitmap.Config.ARGB_8888)
+                        bmp.eraseColor(android.graphics.Color.WHITE)
+                        page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        File(dir, "p%03d.jpg".format(i)).outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+                        bmp.recycle()
+                    } finally {
+                        page.close()
+                    }
+                }
+            } finally {
+                renderer.close()
+            }
+        }
+        if (pageFiles(dir).isEmpty()) { dir.deleteRecursively(); return null }
+        c.contentResolver.openInputStream(uri)?.use { input ->
+            File(dir, "scan.pdf").outputStream().use { input.copyTo(it) }
+        }
+        if (!File(dir, "scan.pdf").exists()) buildPdf(dir)
+        return load(dir)
+    }
+
+    /** Copies a PDF into Downloads/Rainax DocScan (Android 10+). Returns false when not possible. */
+    fun saveToDownloads(c: Context, src: File, displayName: String): Boolean {
+        if (Build.VERSION.SDK_INT < 29) return false
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, displayName)
+            put(MediaStore.Downloads.MIME_TYPE, "application/pdf")
+            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Rainax DocScan")
+        }
+        val uri = c.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return false
+        c.contentResolver.openOutputStream(uri)?.use { out -> src.inputStream().use { it.copyTo(out) } } ?: return false
+        return true
+    }
+
+    fun pdfFileName(doc: ScanDoc) = safe(doc.name) + ".pdf"
+
+    fun decodeScaled(c: Context, uri: Uri, maxSide: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        c.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        var sample = 1
+        while (max(bounds.outWidth, bounds.outHeight) / sample > maxSide) sample *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        val bmp = c.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) } ?: return null
+        val orientation = try {
+            c.contentResolver.openInputStream(uri)?.use {
+                ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+            }
+        } catch (e: Exception) { null } ?: ExifInterface.ORIENTATION_NORMAL
+        val degrees = when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+            else -> 0f
+        }
+        if (degrees == 0f) return bmp
+        val rotated = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, Matrix().apply { postRotate(degrees) }, true)
+        if (rotated !== bmp) bmp.recycle()
+        return rotated
+    }
+
     private fun matrixFor(mode: PageFilter): ColorMatrix {
         val gray = ColorMatrix().apply { setSaturation(0f) }
         if (mode == PageFilter.GRAY) return gray
@@ -210,6 +302,17 @@ object Ocr {
             }.joinToString("\n\n").trim()
         } finally {
             recognizer.close()
+        }
+    }
+    /** OCR for a single picked image. Call from a background thread. */
+    fun readUri(c: Context, uri: Uri): String {
+        val bmp = Repo.decodeScaled(c, uri, 2400) ?: return ""
+        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        try {
+            return Tasks.await(recognizer.process(InputImage.fromBitmap(bmp, 0))).text.trim()
+        } finally {
+            recognizer.close()
+            bmp.recycle()
         }
     }
 }

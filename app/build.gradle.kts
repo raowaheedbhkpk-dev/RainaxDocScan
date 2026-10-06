@@ -43,6 +43,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
 
     // Document scanner (edge detection, crop, filters, gallery import, PDF) - on device, free
     implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0-beta1")

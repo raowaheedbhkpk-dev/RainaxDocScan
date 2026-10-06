@@ -1,6 +1,8 @@
 # Rainax DocScan – document scanner for Android (Kotlin)
 
 Features
+- Dark home screen with tool grid, Recents, bottom tabs (Home / All Documents / Tools / Me)
+- Import photos to PDF, import PDF files, extract text from any image, save PDF to Downloads
 - Camera scan with auto edge detection, crop, rotate, clean/filters (Google ML Kit Document Scanner)
 - Import photos from the gallery, multi-page documents
 - ID card mode (2 pages)
